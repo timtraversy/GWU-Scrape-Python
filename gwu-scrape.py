@@ -2,6 +2,7 @@ class Offering:
     status = None
     crn = None
     departmentAcronym = None
+    departmentName = None
     departmentNumberString = None
     departmentNumber = None
     sectionNumber = None
@@ -39,23 +40,37 @@ from firebase_admin import credentials
 from firebase_admin import firestore
 import google.cloud.exceptions
 
+print ("-------- GWU COURSE SCRAPE ----------")
+
 cred = credentials.Certificate('./credentials.json')
 firebase_admin.initialize_app(cred)
 
 db = firestore.client()
 
-# Increment version counter
-doc_ref = db.collection(u'schools').document(u'gwu')
-try:
-    doc = doc_ref.get()
-    version = doc.to_dict()['version'] + 1
-    db.collection(u'schools').document(u'gwu').set({u'version': version})
-except google.cloud.exceptions.NotFound:
-    print(u'No such document!')
+# get departments and instructors first
+print("Fetching page...")
+r = requests.post("https://my.gwu.edu/mod/pws/coursesearch.cfm")
+soup = BeautifulSoup(r.content, "html.parser")
+
+print("Page fetched. Uploading departments...")
+departments = soup.find('select', attrs={"name": "dept"}).find_all('option')
+departmentsArray = []
+for x in range(1,len(departments)):
+    deptDict = {
+        u'departmentAcronym':departments[x]['value'],
+        u'departmentName':departments[x].text.strip()
+    }
+    departmentsArray.append(deptDict)
+doc_ref = db.collection(u'schools/gwu/lists').document('departments')
+doc_ref.set({u'list':departmentsArray})
+print("Departments uploaded. Fetching first search result page...")
+
+# Get instructors as we go
+instructorsArray = []
 
 # Starting search indices and offering counter
-startIndex = 2601
-endIndex = 2700
+startIndex = 901
+endIndex = 1000
 count = 0
 
 while True:
@@ -92,9 +107,11 @@ while True:
             # Status
             status = cells[0].text.strip()
             if status == 'OPEN':
-                newOffering.status = True
+                newOffering.status = u'OPEN'
             elif status == 'CLOSED':
-                newOffering.status = False
+                newOffering.status = u"CLOSED"
+            elif status == 'WAITLIST':
+                newOffering.status = u"WAITLIST"
             elif status == 'CANCELLED':
                 continue
 
@@ -107,6 +124,9 @@ while True:
             subject = cells[2].text.strip().split()[0]
             if subject:
                 newOffering.departmentAcronym = subject
+                for dept in departmentsArray:
+                    if dept[u'departmentAcronym'] == newOffering.departmentAcronym:
+                        newOffering.departmentName = dept[u'departmentName']
             # newOffering.setDepartmentName
             number = cells[2].text.strip().split()[1]
             if number:
@@ -140,9 +160,16 @@ while True:
                 newOffering.credit = int(credit)
 
             # Instructors
-            instructors = cells[6].text.strip()
+            instructors = cells[6].text.strip().split(';')
+            instructorList = []
             if instructors:
-                newOffering.instructors = instructors
+                for instructor in instructors:
+                    instructorList.append(instructor)
+                    if not instructor in instructorsArray:
+                        instructorsArray.append(instructors)
+            else:
+                instructorList.append('TBD')
+            newOffering.instructors = instructorList
 
             # Class times
 
@@ -236,27 +263,30 @@ while True:
                     }
                     classTimesDict.append(classTime)
 
+            extrasDict = {
+                u'Start Date': newOffering.startDate,
+                u'End Date': newOffering.endDate,
+                u'Comment': newOffering.comment,
+                u'Attributes': newOffering.attributes,
+                u'Books Link': newOffering.booksLink,
+                u'Bulletin Link': newOffering.bulletinLink
+            }
+
             dictionary = {
                 u'status': newOffering.status,
-                # u'departmentName': newOffering.departmentName,
+                u'departmentName': newOffering.departmentName,
                 u'departmentAcronym': newOffering.departmentAcronym,
                 u'departmentNumber': newOffering.departmentNumber,
-                u'departmentNumberString': newOffering.departmentNumberString,
                 u'sectionNumber': newOffering.sectionNumber,
                 u'name': newOffering.name,
                 u'credit': newOffering.credit,
                 u'instructors': newOffering.instructors,
-                u'startDate': newOffering.startDate,
-                u'endDate': newOffering.endDate,
-                u'comment': newOffering.comment,
-                u'attributes': newOffering.attributes,
-                u'booksLink': newOffering.booksLink,
                 u'classTimes': classTimesDict,
                 u'description': newOffering.description,
-                u'bulletinLink': newOffering.bulletinLink
+                u'extras': extrasDict
             }
 
-            doc_ref = db.collection(u'schools/gwu/seasons/fall2018/offerings').document(newOffering.crn)
+            doc_ref = db.collection(u'schools/gwu/fall2018_courses').document(newOffering.crn)
             doc_ref.set(dictionary)
 
             print "Added", newOffering.name
@@ -275,4 +305,23 @@ while True:
     if endIndex > 10000:
         break
 
-print "Total= ", count
+print "Done uploading courses, total= ", count
+
+# Instructor upload
+print "Uploading instructors..."
+doc_ref = db.collection(u'schools/gwu/lists').document('instructors')
+doc_ref.set({u'list':instructorsArray})
+print "Instructors uploaded"
+
+# Updating version number
+doc_ref = db.collection(u'schools').document(u'gwu')
+try:
+    doc = doc_ref.get()
+    version = doc.to_dict()['version']
+    print(u'Updating from version {}'.format(doc.to_dict()['version']))
+    doc_ref.set({u'version':version + 1})
+except google.cloud.exceptions.NotFound:
+    print(u'No metadata, something is wrong.')
+    exit(1)
+
+print ("----- GWU COURSE SCRAPE COMPLETE -------")
