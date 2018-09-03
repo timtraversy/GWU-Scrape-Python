@@ -1,3 +1,37 @@
+def create_offering(newOffering):
+    classTimesArray = []
+    if newOffering.classTimes:
+        for classTime in newOffering.classTimes:
+            classTime = {
+                u'location': classTime.location,
+                u'startTime': classTime.startTime,
+                u'endTime': classTime.endTime,
+                u'sunday': classTime.sunday,
+                u'monday': classTime.monday,
+                u'tuesday': classTime.tuesday,
+                u'wednesday': classTime.wednesday,
+                u'thursday': classTime.thursday,
+                u'friday': classTime.friday,
+                u'saturday': classTime.saturday
+            }
+            classTimesArray.append(classTime)
+    extrasDict = {
+        u'Attributes': newOffering.attributes,
+        u'Levels':newOffering.levels,
+        u'Total Seats': newOffering.totalSeats,
+        u'Taken Seats': newOffering.takenSeats,
+        u'Total Waitlist Seats': newOffering.totalWaitlistSeats,
+        u'Taken Waitlist Seats': newOffering.takenWaitlistSeats
+    }
+    return {
+        u'sectionNumber': newOffering.sectionNumber,
+        u'status': newOffering.status,
+        u'id': newOffering.id,
+        u'instructors': newOffering.instructors,
+        u'classTimes': classTimesArray,
+        u'extras': extrasDict
+    }
+
 class Offering:
     status = None
     levels = None
@@ -17,7 +51,7 @@ class Offering:
     booksLink = None
     bulletinLink = None
     description = None
-
+    instructors = None
     totalSeats = None
     takenSeats = None
     totalWaitlistSeats = None
@@ -26,7 +60,6 @@ class ClassTime:
     location = None
     startTime = None
     endTime = None
-    instructors = None
     sunday = False
     monday = False
     tuesday = False
@@ -72,6 +105,15 @@ dataHomepage['sel_subj'] = 'dummy'
 r = requests.post(url, data=dataHomepage)
 soup = BeautifulSoup(r.content, "html.parser")
 
+unlistedDepts = {
+    "Bsns of Creative Enterprises": "BC",
+    "Civic Media": "CM",
+    "External Program Course": "EXT VAL",
+    "Prof Development Experience":"PDE",
+    "School of Communication":"SOC",
+    "Washington Program":"DC"
+}
+
 print("Page fetched. Uploading departments...")
 departments = soup.find('td', class_='dedefault').find_all('option')
 departmentsArray = []
@@ -82,7 +124,13 @@ for department in departments:
             u'departmentAcronym':re.sub('[^A-Z]','', info[1].strip()),
             u'departmentName':info[0].strip()
         }
-        departmentsArray.append(deptDict)
+    else:
+        deptDict = {
+            u'departmentAcronym':unicode(unlistedDepts[info[0].strip()]),
+            u'departmentName':info[0].strip()
+        }
+    departmentsArray.append(deptDict)
+
 doc_ref = db.collection(u'schools/emerson/lists').document('departments')
 doc_ref.set({u'list':departmentsArray})
 print("Departments uploaded. Uploading instructors...")
@@ -109,6 +157,8 @@ soup = BeautifulSoup(r.content,"html.parser")
 offering_table = soup.find('table', class_='datadisplaytable')
 offerings = offering_table.find_all('tr', recursive=False)
 
+courseArray = []
+
 # Loop over offerings two at a time to get both data pieces
 count = 0
 for i in range(0,len(offerings),2):
@@ -134,14 +184,15 @@ for i in range(0,len(offerings),2):
 
     newOffering.id = data[1+offset].strip()
     newOffering.departmentAcronym = data[2+offset].strip().split(' ')[0]
-    for dept in departmentsArray:
-        if dept[u'departmentAcronym'] == newOffering.departmentAcronym:
-            newOffering.departmentName = dept[u'departmentName']
-    newOffering.departmentNumber = data[2+offset].strip().split(' ')[1]
+    if newOffering.departmentAcronym == "EXT":
+        newOffering.departmentAcronym = unicode("EXT VAL")
+        newOffering.departmentName = unicode("External Program Course")
+    else:
+        for dept in departmentsArray:
+            if dept[u'departmentAcronym'] == newOffering.departmentAcronym:
+                newOffering.departmentName = dept[u'departmentName']
+        newOffering.departmentNumber = data[2+offset].strip().split(' ')[1]
     newOffering.sectionNumber = data[3+offset].strip()
-    if newOffering.departmentAcronym:
-        newOffering.departmentName = ''
-        newOffering.departmentAcronym = ''
 
     # Get seat details + status
     url = "https://ssb.emerson.edu" + offerings[i].find('a')['href']
@@ -152,8 +203,8 @@ for i in range(0,len(offerings),2):
     # Seats
     newOffering.totalSeats = seats[1].text
     newOffering.takenSeats = seats[2].text
-    newOffering.totalWaitlistSeats = seats[4].text
-    newOffering.takenWaitlistSeats = seats[5].text
+    # newOffering.totalWaitlistSeats = seats[4].text
+    # newOffering.takenWaitlistSeats = seats[5].text
 
     # Status
     if newOffering.totalSeats > newOffering.takenSeats:
@@ -174,7 +225,12 @@ for i in range(0,len(offerings),2):
     # Credits
     catalog_entry = offerings[i+1].find('a')
     credits = catalog_entry.previous_sibling.previous_sibling.previous_sibling.strip()
-    newOffering.credit = re.sub('[^1-9]','', credits)
+    credits = re.sub('Credits','', credits).strip()
+    credits = re.sub('\.0+','', credits).strip()
+    credits = re.sub('OR','or', credits)
+    credits = re.sub('TO','to', credits)
+    credits = re.sub(' +',' ', credits)
+    newOffering.credit = unicode(credits)
 
     # Description from catalog entry
     url = "https://ssb.emerson.edu" + catalog_entry['href']
@@ -190,15 +246,18 @@ for i in range(0,len(offerings),2):
         class_time_table = class_time_table.find_all('tr')
         for j in range(1,len(class_time_table)):
             newClassTime = ClassTime()
-            classTimes.append(newClassTime)
             details = class_time_table[j].find_all('td',class_='dddefault')
             for k in range (1,len(details)):
                 text = details[k].text.strip()
+                valid = True
                 if k == 1:
                     if text != 'TBA':
                         times = text.split('-')
                         newClassTime.startTime = eastern.localize(datetime.strptime(times[0].strip(), '%I:%M %p'))
                         newClassTime.endTime = eastern.localize(datetime.strptime(times[1].strip(), '%I:%M %p'))
+                    else:
+                        valid = False
+                        break
                 if k == 2:
                     if 'U' in text:
                         newClassTime.sunday = True
@@ -218,61 +277,50 @@ for i in range(0,len(offerings),2):
                     # location
                     newClassTime.location = text
                 if k == 6:
-                    inst = re.sub('\([A-z]\)','', text).strip()
-                    instructors.append(re.sub(' +', ' ', inst))
-    newOffering.classTimes = classTimes
+                    insts = re.sub('\([A-z]\)','', text).split(',')
+                    for inst in insts:
+                        if inst == "TBA":
+                            instructors = None
+                            break
+                        newInst = inst.strip()
+                        if not newInst in instructors:
+                            instructors.append(newInst)
+            if valid:
+                classTimes.append(newClassTime)
+
+    if classTimes:
+        newOffering.classTimes = classTimes
 
     if instructors:
         newOffering.instructors = instructors
-    else:
-        newOffering.instructors = ['TBD']
 
-    classTimesArray = []
-    if newOffering.classTimes:
-        for classTime in newOffering.classTimes:
-            classTime = {
-                u'location': classTime.location,
-                u'startTime': classTime.startTime,
-                u'endTime': classTime.endTime,
-                u'sunday': classTime.sunday,
-                u'monday': classTime.monday,
-                u'tuesday': classTime.tuesday,
-                u'wednesday': classTime.wednesday,
-                u'thursday': classTime.thursday,
-                u'friday': classTime.friday,
-                u'saturday': classTime.saturday
-            }
-            classTimesArray.append(classTime)
+    courseArray.append(newOffering)
+    print('Parsed: {id}, Count:{len}'.format(id=unicode(newOffering.id), len=len(courseArray)))
 
-    extrasDict = {
-        u'Attributes': newOffering.attributes,
-        u'Levels':newOffering.levels,
-        u'Total Seats': newOffering.totalSeats,
-        u'Taken Seats': newOffering.takenSeats,
-        u'Total Waitlist Seats': newOffering.totalWaitlistSeats,
-        u'Taken Waitlist Seats': newOffering.takenWaitlistSeats
-    }
-
+count = 0
+for indx, course in enumerate(courseArray):
+    offeringsArray = [create_offering(course)]
+    index = indx + 1
+    while index < len(courseArray):
+        courseTwo = courseArray[index]
+        if (course.name == courseTwo.name and course.departmentNumber == courseTwo.departmentNumber and course.departmentAcronym == courseTwo.departmentAcronym):
+            offeringsArray.append(create_offering(courseTwo))
+            del courseArray[index]
+        index += 1
     dictionary = {
-        u'status': newOffering.status,
-        u'departmentAcronym': newOffering.departmentAcronym,
-        u'departmentName': newOffering.departmentName,
-        u'departmentNumber': newOffering.departmentNumber,
-        u'sectionNumber': newOffering.sectionNumber,
-        u'name': newOffering.name,
-        u'credit': newOffering.credit,
-        u'instructors': newOffering.instructors,
-        u'classTimes': classTimesArray,
-        u'description': newOffering.description,
-        u'extras': extrasDict
+        u'departmentName': course.departmentName,
+        u'departmentAcronym': course.departmentAcronym,
+        u'departmentNumber': course.departmentNumber,
+        u'name': course.name,
+        u'credit': course.credit,
+        u'description': course.description,
+        u'offerings': offeringsArray,
     }
 
-
-    doc_ref = db.collection(u'schools/emerson/fall2018_courses').document(newOffering.id)
-    doc_ref.set(dictionary)
-
-    print (u"Added: {} (Total count: {})".format(newOffering.name, count))
+    identifier = unicode(course.departmentAcronym + str(course.departmentNumber))
+    db.collection(u'schools/emerson/fall2018_courses').document(identifier).set(dictionary)
     count += 1
+    print('Uploaded ({count}/{total}): {id}'.format(count=count, total=len(courseArray), id=course.id))
 
 # Updating version number
 doc_ref = db.collection(u'schools').document(u'emerson')

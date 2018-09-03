@@ -1,3 +1,37 @@
+def create_offering(newOffering):
+    classTimesArray = []
+    if newOffering.classTimes:
+        for classTime in newOffering.classTimes:
+            classTime = {
+                u'location': classTime.location,
+                u'startTime': classTime.startTime,
+                u'endTime': classTime.endTime,
+                u'sunday': classTime.sunday,
+                u'monday': classTime.monday,
+                u'tuesday': classTime.tuesday,
+                u'wednesday': classTime.wednesday,
+                u'thursday': classTime.thursday,
+                u'friday': classTime.friday,
+                u'saturday': classTime.saturday
+            }
+            classTimesArray.append(classTime)
+    extrasDict = {
+        u'Start Date': newOffering.startDate,
+        u'End Date': newOffering.endDate,
+        u'Comment': newOffering.comment,
+        u'Attributes': newOffering.attributes,
+        u'Books Link': newOffering.booksLink,
+        u'Bulletin Link': newOffering.bulletinLink
+    }
+    return {
+        u'sectionNumber': newOffering.sectionNumber,
+        u'status': newOffering.status,
+        u'id': newOffering.crn,
+        u'instructors': newOffering.instructors,
+        u'classTimes': classTimesArray,
+        u'extras': extrasDict
+    }
+
 class Offering:
     status = None
     crn = None
@@ -17,6 +51,7 @@ class Offering:
     booksLink = None
     bulletinLink = None
     description = None
+    offerings = None
 class ClassTime:
     location = None
     startTime = None
@@ -63,15 +98,18 @@ for x in range(1,len(departments)):
     departmentsArray.append(deptDict)
 doc_ref = db.collection(u'schools/gwu/lists').document('departments')
 doc_ref.set({u'list':departmentsArray})
-print("Departments uploaded. Fetching first search result page...")
+print("Departments uploaded. Parsing each seach result page...")
 
 # Get instructors as we go
 instructorsArray = []
 
-# Starting search indices and offering counter
+# Starting search indices and offering counter (901-1000)
 startIndex = 901
 endIndex = 1000
 count = 0
+
+# Array for all courses
+courseArray = []
 
 while True:
     print "Index: ", startIndex, " - ", endIndex
@@ -162,14 +200,13 @@ while True:
             # Instructors
             instructors = cells[6].text.strip().split(';')
             instructorList = []
-            if instructors:
-                for instructor in instructors:
+            for instructor in instructors:
+                if instructor:
                     instructorList.append(instructor)
-                    if not instructor in instructorsArray:
-                        instructorsArray.append(instructors)
+            if instructorList:
+                newOffering.instructors = instructorList
             else:
-                instructorList.append('TBD')
-            newOffering.instructors = instructorList
+                newOffering.instructors = None
 
             # Class times
 
@@ -245,51 +282,8 @@ while True:
 
             # BOOKS LINK
             newOffering.booksLink = (cells[2].find_next("a")['href'])
+            courseArray.append(newOffering)
 
-            classTimesDict = []
-            if classTimes:
-                for classTime in newOffering.classTimes:
-                    classTime = {
-                        u'location': classTime.location,
-                        u'startTime': classTime.startTime,
-                        u'endTime': classTime.endTime,
-                        u'sunday': classTime.sunday,
-                        u'monday': classTime.monday,
-                        u'tuesday': classTime.tuesday,
-                        u'wednesday': classTime.wednesday,
-                        u'thursday': classTime.thursday,
-                        u'friday': classTime.friday,
-                        u'saturday': classTime.saturday
-                    }
-                    classTimesDict.append(classTime)
-
-            extrasDict = {
-                u'Start Date': newOffering.startDate,
-                u'End Date': newOffering.endDate,
-                u'Comment': newOffering.comment,
-                u'Attributes': newOffering.attributes,
-                u'Books Link': newOffering.booksLink,
-                u'Bulletin Link': newOffering.bulletinLink
-            }
-
-            dictionary = {
-                u'status': newOffering.status,
-                u'departmentName': newOffering.departmentName,
-                u'departmentAcronym': newOffering.departmentAcronym,
-                u'departmentNumber': newOffering.departmentNumber,
-                u'sectionNumber': newOffering.sectionNumber,
-                u'name': newOffering.name,
-                u'credit': newOffering.credit,
-                u'instructors': newOffering.instructors,
-                u'classTimes': classTimesDict,
-                u'description': newOffering.description,
-                u'extras': extrasDict
-            }
-
-            doc_ref = db.collection(u'schools/gwu/fall2018_courses').document(newOffering.crn)
-            doc_ref.set(dictionary)
-
-            print "Added", newOffering.name
             count += 1
 
         if ('Next Page' not in soup.body.text):
@@ -299,11 +293,38 @@ while True:
 
     # Break here if just testing and don't want whole set
     # break
-
     startIndex += 100
     endIndex += 100
     if endIndex > 10000:
         break
+
+print("All courses parsed. Sorting, combining, and uploading courses...")
+
+count = 0
+for indx, course in enumerate(courseArray):
+    offeringsArray = [create_offering(course)]
+    index = indx + 1
+    while index < len(courseArray):
+        courseTwo = courseArray[index]
+        if (course.name == courseTwo.name and course.departmentNumber == courseTwo.departmentNumber and course.departmentAcronym == courseTwo.departmentAcronym):
+            offeringsArray.append(create_offering(courseTwo))
+            del courseArray[index]
+        index += 1
+    dictionary = {
+        u'departmentName': course.departmentName,
+        u'departmentAcronym': course.departmentAcronym,
+        u'departmentNumber': course.departmentNumber,
+        u'name': course.name,
+        u'credit': course.credit,
+        u'description': course.description,
+        u'offerings': offeringsArray,
+    }
+
+    identifier = course.departmentAcronym + str(course.departmentNumber)
+    db.collection(u'schools/gwu/fall2018_courses').document(unicode(identifier)).set(dictionary)
+    count += 1
+    print('Uploaded ({count}/{total}): {id}'.format(count=count, total=len(courseArray), id=course.crn))
+
 
 print "Done uploading courses, total= ", count
 
