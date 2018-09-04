@@ -105,7 +105,7 @@ instructorsArray = []
 
 # Starting search indices and offering counter (901-1000)
 startIndex = 901
-endIndex = 1000
+endIndex = 100
 count = 0
 
 # Array for all courses
@@ -309,7 +309,8 @@ for indx, course in enumerate(courseArray):
         if (course.name == courseTwo.name and course.departmentNumber == courseTwo.departmentNumber and course.departmentAcronym == courseTwo.departmentAcronym):
             offeringsArray.append(create_offering(courseTwo))
             del courseArray[index]
-        index += 1
+        else:
+            index += 1
     dictionary = {
         u'departmentName': course.departmentName,
         u'departmentAcronym': course.departmentAcronym,
@@ -323,7 +324,7 @@ for indx, course in enumerate(courseArray):
     identifier = course.departmentAcronym + str(course.departmentNumber)
     db.collection(u'schools/gwu/fall2018_courses').document(unicode(identifier)).set(dictionary)
     count += 1
-    print('Uploaded ({count}/{total}): {id}'.format(count=count, total=len(courseArray), id=course.crn))
+    print('Uploaded ({count}/{total}): {id}'.format(count=count, total=len(courseArray), id=identifier))
 
 
 print "Done uploading courses, total= ", count

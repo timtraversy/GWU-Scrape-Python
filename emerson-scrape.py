@@ -306,7 +306,8 @@ for indx, course in enumerate(courseArray):
         if (course.name == courseTwo.name and course.departmentNumber == courseTwo.departmentNumber and course.departmentAcronym == courseTwo.departmentAcronym):
             offeringsArray.append(create_offering(courseTwo))
             del courseArray[index]
-        index += 1
+        else:
+            index += 1
     dictionary = {
         u'departmentName': course.departmentName,
         u'departmentAcronym': course.departmentAcronym,
