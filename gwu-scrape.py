@@ -105,7 +105,7 @@ instructorsArray = []
 
 # Starting search indices and offering counter (901-1000)
 startIndex = 901
-endIndex = 100
+endIndex = 1000
 count = 0
 
 # Array for all courses
@@ -283,6 +283,9 @@ while True:
             # BOOKS LINK
             newOffering.booksLink = (cells[2].find_next("a")['href'])
             courseArray.append(newOffering)
+
+            print(vars(newOffering))
+            print(", ".join(list(newOffering.values())))
 
             count += 1
 
